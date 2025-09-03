@@ -3,50 +3,61 @@
 #include <QBoxLayout>
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QFrame>
 #include <QLabel>
+#include <QLatin1String>
+#include <QMainWindow>
+#include <QStackedWidget>
+#include <QStringList>
+#include <QWidget>
 #include "managers/StyleManager.h"
+#include "managers/FileTypeIconManager.h"
 #include "model/RenderModel.h"
+#include "ui/widgets/WelcomeWidget.h"
+#include "ui/managers/WelcomeScreenManager.h"
+#include "utils/LoggingMacros.h"
 
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    qDebug() << "MainWindow: Starting initialization...";
+    LOG_DEBUG("MainWindow: Starting initialization...");
     // Initialize with StyleManager's default theme to maintain consistency
     QString defaultTheme =
         (STYLE.currentTheme() == Theme::Light) ? "light" : "dark";
     applyTheme(defaultTheme);
-    qDebug() << "MainWindow: Theme applied successfully";
+    LOG_DEBUG("MainWindow: Theme applied successfully ({})", defaultTheme.toStdString());
 
     initWindow();
-    qDebug() << "MainWindow: Window initialized";
+    LOG_DEBUG("MainWindow: Window initialized");
     initModel();
-    qDebug() << "MainWindow: Models initialized";
+    LOG_DEBUG("MainWindow: Models initialized");
     initController();
-    qDebug() << "MainWindow: Controllers initialized";
+    LOG_DEBUG("MainWindow: Controllers initialized");
+    initWelcomeScreen();
+    LOG_DEBUG("MainWindow: Welcome screen initialized");
     initContent();
-    qDebug() << "MainWindow: Content initialized";
+    LOG_DEBUG("MainWindow: Content initialized");
 
     initConnection();
-    qDebug() << "MainWindow: Connections initialized";
+    LOG_DEBUG("MainWindow: Connections initialized");
+    initWelcomeScreenConnections();
+    LOG_DEBUG("MainWindow: Welcome screen connections initialized");
 
     // 启动异步初始化以避免阻塞UI
     if (recentFilesManager) {
         try {
             recentFilesManager->initializeAsync();
-            qDebug() << "MainWindow: Async initialization started";
+            LOG_DEBUG("MainWindow: Async initialization started");
         } catch (const std::exception& e) {
-            qWarning() << "MainWindow: Failed to start async initialization:"
-                       << e.what();
+            LOG_WARNING("MainWindow: Failed to start async initialization: {}", e.what());
         } catch (...) {
-            qWarning() << "MainWindow: Unknown error during async "
-                          "initialization startup";
+            LOG_WARNING("MainWindow: Unknown error during async initialization startup");
         }
     } else {
-        qWarning() << "MainWindow: RecentFilesManager is null, skipping async "
-                      "initialization";
+        LOG_WARNING("MainWindow: RecentFilesManager is null, skipping async initialization");
     }
 
-    qDebug() << "MainWindow: Initialization completed successfully";
+    LOG_INFO("MainWindow: Initialization completed successfully");
 }
 
 MainWindow::~MainWindow() noexcept {}
@@ -60,6 +71,7 @@ void MainWindow::initContent() {
     menuBar = new MenuBar(this);
     toolBar = new ToolBar(this);
     sideBar = new SideBar(this);
+    rightSideBar = new RightSideBar(this);
     statusBar = new StatusBar(factory, this);
     viewWidget = new ViewWidget(this);
 
@@ -74,27 +86,43 @@ void MainWindow::initContent() {
     addToolBar(toolBar);
     setStatusBar(statusBar);
 
-    mainSplitter = new QSplitter(Qt::Horizontal, this);
+    // 创建主内容区域的QStackedWidget
+    m_contentStack = new QStackedWidget(this);
 
+    // 创建主PDF查看器区域（包含侧边栏和视图）
+    QWidget* mainViewerWidget = new QWidget();
+    QHBoxLayout* mainViewerLayout = new QHBoxLayout(mainViewerWidget);
+    mainViewerLayout->setContentsMargins(0, 0, 0, 0);
+
+    mainSplitter = new QSplitter(Qt::Horizontal, mainViewerWidget);
     mainSplitter->addWidget(sideBar);
     mainSplitter->addWidget(viewWidget);
-
-    mainSplitter->setCollapsible(0, true);
-    mainSplitter->setCollapsible(1, false);
-    mainSplitter->setStretchFactor(1, 1);
+    mainSplitter->addWidget(rightSideBar);
+    mainSplitter->setCollapsible(0, true);  // Left sidebar collapsible
+    mainSplitter->setCollapsible(1, false); // ViewWidget not collapsible
+    mainSplitter->setCollapsible(2, true);  // Right sidebar collapsible
+    mainSplitter->setStretchFactor(1, 1);   // ViewWidget gets stretch priority
 
     // 根据侧边栏的可见性设置初始尺寸
-    if (sideBar->isVisible()) {
-        mainSplitter->setSizes({sideBar->getPreferredWidth(), 1000});
-    } else {
-        mainSplitter->setSizes({0, 1000});
-    }
+    int leftWidth = sideBar->isVisible() ? sideBar->getPreferredWidth() : 0;
+    int rightWidth = rightSideBar->isVisible() ? rightSideBar->getPreferredWidth() : 0;
+    mainSplitter->setSizes({leftWidth, 1000, rightWidth});
 
-    QWidget* centralWidget = new QWidget(this);
-    QHBoxLayout* mainLayout = new QHBoxLayout(centralWidget);
-    mainLayout->setContentsMargins(0, 0, 0, 0);
-    mainLayout->addWidget(mainSplitter);
-    setCentralWidget(centralWidget);
+    mainViewerLayout->addWidget(mainSplitter);
+
+    // 添加页面到堆叠组件
+    m_contentStack->addWidget(m_welcomeWidget);      // 索引 0: 欢迎界面
+    m_contentStack->addWidget(mainViewerWidget);     // 索引 1: 主查看器
+
+    // 设置中央组件
+    setCentralWidget(m_contentStack);
+
+    // 初始显示欢迎界面（如果启用）
+    if (m_welcomeScreenManager && m_welcomeScreenManager->shouldShowWelcomeScreen()) {
+        m_contentStack->setCurrentIndex(0);
+    } else {
+        m_contentStack->setCurrentIndex(1);
+    }
 }
 
 void MainWindow::initModel() {
@@ -110,6 +138,31 @@ void MainWindow::initController() {
 
     // 设置最近文件管理器
     documentController->setRecentFilesManager(recentFilesManager);
+}
+
+void MainWindow::initWelcomeScreen() {
+    LOG_DEBUG("MainWindow: Initializing welcome screen...");
+
+    // 初始化文件类型图标管理器
+    FILE_ICON_MANAGER.preloadIcons();
+
+    // 创建欢迎界面组件
+    m_welcomeWidget = new WelcomeWidget(this);
+    m_welcomeWidget->setRecentFilesManager(recentFilesManager);
+
+    // 创建欢迎界面管理器
+    m_welcomeScreenManager = new WelcomeScreenManager(this);
+    m_welcomeScreenManager->setMainWindow(this);
+    m_welcomeScreenManager->setWelcomeWidget(m_welcomeWidget);
+    m_welcomeScreenManager->setDocumentModel(documentModel);
+
+    // 设置管理器到欢迎界面
+    m_welcomeWidget->setWelcomeScreenManager(m_welcomeScreenManager);
+
+    // 应用主题
+    m_welcomeWidget->applyTheme();
+
+    LOG_DEBUG("MainWindow: Welcome screen initialized successfully");
 }
 
 void MainWindow::initConnection() {
@@ -193,10 +246,25 @@ void MainWindow::initConnection() {
 
     // 连接文档打开/关闭状态变化
     connect(documentModel, &DocumentModel::documentOpened, this,
-            [this](int, const QString&) { toolBar->setActionsEnabled(true); });
+            [this](int, const QString&) {
+                toolBar->setActionsEnabled(true);
+                // 通知欢迎界面管理器文档已打开
+                if (m_welcomeScreenManager) {
+                    m_welcomeScreenManager->onDocumentOpened();
+                }
+            });
     connect(documentModel, &DocumentModel::documentClosed, this, [this](int) {
         if (documentModel->isEmpty()) {
             toolBar->setActionsEnabled(false);
+            // 通知欢迎界面管理器所有文档已关闭
+            if (m_welcomeScreenManager) {
+                m_welcomeScreenManager->onAllDocumentsClosed();
+            }
+        } else {
+            // 通知欢迎界面管理器文档已关闭
+            if (m_welcomeScreenManager) {
+                m_welcomeScreenManager->onDocumentClosed();
+            }
         }
     });
 
@@ -395,7 +463,7 @@ void MainWindow::onPDFActionRequested(ActionMap action) {
             emit pdfViewerActionRequested(action);
             break;
         default:
-            qWarning() << "Unhandled PDF action:" << static_cast<int>(action);
+            LOG_WARNING("Unhandled PDF action: {}", static_cast<int>(action));
             break;
     }
 }
@@ -412,7 +480,7 @@ void MainWindow::onOpenRecentFileRequested(const QString& filePath) {
     if (documentController) {
         bool success = documentController->openDocument(filePath);
         if (!success) {
-            qWarning() << "Failed to open recent file:" << filePath;
+            LOG_WARNING("Failed to open recent file: {}", filePath.toStdString());
         }
     }
 }
@@ -421,8 +489,7 @@ void MainWindow::onOpenRecentFileRequested(const QString& filePath) {
 void MainWindow::applyTheme(const QString& theme) {
     // 防止重复应用相同主题
     if (m_currentAppliedTheme == theme) {
-        qDebug() << "Theme" << theme
-                 << "is already applied, skipping redundant application";
+        LOG_DEBUG("Theme {} is already applied, skipping redundant application", theme.toStdString());
         return;
     }
 
@@ -430,34 +497,135 @@ void MainWindow::applyTheme(const QString& theme) {
     Theme styleManagerTheme = (theme == "dark") ? Theme::Dark : Theme::Light;
     STYLE.setTheme(styleManagerTheme);
 
-    // 尝试从外部样式文件加载
-    auto path =
-        QString("%1/styles/%2.qss").arg(qApp->applicationDirPath(), theme);
+    // 尝试从外部样式文件加载 - 支持多种部署场景
+    QStringList possiblePaths = {
+        // 开发环境：相对于可执行文件的assets目录
+        QString("%1/../assets/styles/%2.qss").arg(qApp->applicationDirPath(), theme),
+        // 部署环境：可执行文件同级的styles目录
+        QString("%1/styles/%2.qss").arg(qApp->applicationDirPath(), theme),
+        // 备选：相对于工作目录的assets目录
+        QString("assets/styles/%2.qss").arg(theme),
+        // 备选：当前目录的styles子目录
+        QString("styles/%2.qss").arg(theme)
+    };
 
-    QFile file(path);
-    if (file.exists() && file.open(QFile::ReadOnly)) {
-        // 成功读取外部样式文件
-        QString styleSheet = QLatin1String(file.readAll());
-        file.close();
+    QString selectedPath;
+    for (const QString& candidatePath : possiblePaths) {
+        QFileInfo fileInfo(candidatePath);
+        LOG_DEBUG("Checking QSS path: {} exists: {}", candidatePath.toStdString(), fileInfo.exists());
 
-        if (!styleSheet.isEmpty()) {
-            setStyleSheet(styleSheet);
-            m_currentAppliedTheme = theme;  // 更新当前应用的主题状态
-            qDebug() << "Applied external theme:" << theme << "from" << path;
-            return;
+        if (fileInfo.exists() && fileInfo.isReadable()) {
+            selectedPath = candidatePath;
+            LOG_DEBUG("Selected QSS path: {}", selectedPath.toStdString());
+            break;
+        }
+    }
+
+    if (!selectedPath.isEmpty()) {
+        QFile file(selectedPath);
+        if (file.open(QFile::ReadOnly)) {
+            QString styleSheet = QLatin1String(file.readAll());
+            file.close();
+
+            if (!styleSheet.isEmpty()) {
+                setStyleSheet(styleSheet);
+                m_currentAppliedTheme = theme;
+                LOG_DEBUG("Applied external theme: {} from {}", theme.toStdString(), selectedPath.toStdString());
+                return;
+            } else {
+                LOG_WARNING("QSS file is empty: {}", selectedPath.toStdString());
+            }
+        } else {
+            LOG_WARNING("Failed to open QSS file: {}", selectedPath.toStdString());
         }
     }
 
     // 外部文件不可用时，使用StyleManager作为备选方案
-    qWarning() << "External theme file not found or empty:" << path;
-    qDebug() << "Falling back to StyleManager for theme:" << theme;
+    LOG_WARNING("No external theme file found for theme: {}", theme.toStdString());
+    LOG_DEBUG("Attempted paths: [{}]", possiblePaths.join(", ").toStdString());
+    LOG_DEBUG("Falling back to StyleManager for theme: {}", theme.toStdString());
 
     // 应用StyleManager生成的样式
     QString fallbackStyleSheet = STYLE.getApplicationStyleSheet();
     setStyleSheet(fallbackStyleSheet);
     m_currentAppliedTheme = theme;  // 更新当前应用的主题状态
 
-    qDebug() << "Applied fallback theme using StyleManager:" << theme;
+    LOG_DEBUG("Applied fallback theme using StyleManager: {}", theme.toStdString());
+}
+
+void MainWindow::initWelcomeScreenConnections() {
+    if (!m_welcomeScreenManager || !m_welcomeWidget) return;
+
+    LOG_DEBUG("MainWindow: Setting up welcome screen connections...");
+
+    // 连接欢迎界面管理器信号
+    connect(m_welcomeScreenManager, &WelcomeScreenManager::showWelcomeScreenRequested,
+            this, &MainWindow::onWelcomeScreenShowRequested);
+    connect(m_welcomeScreenManager, &WelcomeScreenManager::hideWelcomeScreenRequested,
+            this, &MainWindow::onWelcomeScreenHideRequested);
+    connect(m_welcomeScreenManager, &WelcomeScreenManager::welcomeScreenEnabledChanged,
+            menuBar, &MenuBar::setWelcomeScreenEnabled);
+
+    // 连接菜单栏欢迎界面切换信号
+    connect(menuBar, &MenuBar::welcomeScreenToggleRequested,
+            m_welcomeScreenManager, &WelcomeScreenManager::onWelcomeScreenToggleRequested);
+
+    // 连接欢迎界面组件信号
+    connect(m_welcomeWidget, &WelcomeWidget::fileOpenRequested,
+            this, &MainWindow::onWelcomeFileOpenRequested);
+    connect(m_welcomeWidget, &WelcomeWidget::newFileRequested,
+            this, &MainWindow::onWelcomeNewFileRequested);
+    connect(m_welcomeWidget, &WelcomeWidget::openFileRequested,
+            this, &MainWindow::onWelcomeOpenFileRequested);
+
+    // 初始化菜单状态
+    menuBar->setWelcomeScreenEnabled(m_welcomeScreenManager->isWelcomeScreenEnabled());
+
+    // 启动欢迎界面管理器
+    m_welcomeScreenManager->onApplicationStartup();
+
+    LOG_DEBUG("MainWindow: Welcome screen connections established");
+}
+
+// Welcome screen slot implementations
+void MainWindow::onWelcomeScreenShowRequested() {
+    LOG_DEBUG("MainWindow: Showing welcome screen");
+    if (m_contentStack) {
+        m_contentStack->setCurrentIndex(0); // 欢迎界面
+    }
+}
+
+void MainWindow::onWelcomeScreenHideRequested() {
+    LOG_DEBUG("MainWindow: Hiding welcome screen");
+    if (m_contentStack) {
+        m_contentStack->setCurrentIndex(1); // 主查看器
+    }
+}
+
+void MainWindow::onWelcomeFileOpenRequested(const QString& filePath) {
+    LOG_DEBUG("MainWindow: Opening file from welcome screen: {}", filePath.toStdString());
+
+    // 使用现有的文档控制器打开文件
+    if (documentController) {
+        documentController->openDocument(filePath);
+    }
+}
+
+void MainWindow::onWelcomeNewFileRequested() {
+    LOG_DEBUG("MainWindow: New file requested from welcome screen");
+
+    // 这里可以实现新建文件的逻辑
+    // 目前PDF阅读器可能不支持新建文件，所以可以显示打开文件对话框
+    onWelcomeOpenFileRequested();
+}
+
+void MainWindow::onWelcomeOpenFileRequested() {
+    LOG_DEBUG("MainWindow: Open file requested from welcome screen");
+
+    // 使用现有的文档控制器打开文件对话框
+    if (documentController) {
+        documentController->execute(ActionMap::openFile, this);
+    }
 }
 
 void MainWindow::handleActionExecuted(ActionMap id) {

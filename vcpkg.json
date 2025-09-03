@@ -6,8 +6,9 @@
     "license": "MIT",
     "dependencies": [
         "qtbase",
-        "qtsvg",
         "qtspeech",
+        "qtsvg",
+        "spdlog",
         {
             "name": "qttools",
             "features": [

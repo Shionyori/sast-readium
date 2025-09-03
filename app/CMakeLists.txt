@@ -41,6 +41,7 @@ target_sources(
     # Core UI components
     ui/core/MenuBar.cpp
     ui/core/SideBar.cpp
+    ui/core/RightSideBar.cpp
     ui/core/StatusBar.cpp
     ui/core/ToolBar.cpp
     ui/core/ViewWidget.cpp
@@ -56,6 +57,9 @@ target_sources(
     ui/widgets/SearchWidget.cpp
     ui/widgets/BookmarkWidget.cpp
     ui/widgets/AnnotationToolbar.cpp
+    ui/widgets/WelcomeWidget.cpp
+    ui/widgets/RecentFileListWidget.cpp
+    ui/widgets/DebugLogPanel.cpp
 
     # Dialog components
     ui/dialogs/DocumentComparison.cpp
@@ -72,9 +76,11 @@ target_sources(
     # UI Manager components
     ui/managers/PerformanceMonitor.cpp
     ui/managers/AccessibilityManager.cpp
+    ui/managers/WelcomeScreenManager.cpp
 
     # Core Manager components
     managers/StyleManager.cpp
+    managers/FileTypeIconManager.cpp
 
     # Viewer components (continued)
     ui/viewer/PDFPrerenderer.cpp
@@ -113,6 +119,16 @@ target_sources(
 
     # Views
     view/Views.cpp
+
+    # Logging
+    utils/Logger.cpp
+    utils/QtSpdlogBridge.cpp
+    utils/LoggingManager.cpp
+    utils/LoggingMacros.cpp
+    utils/LoggingConfig.cpp
+
+    # Tests (optional, can be excluded in release builds)
+    # tests/test_logging.cpp  # Commented out - file doesn't exist yet
 )
 target_include_directories(
     app
@@ -126,6 +142,7 @@ target_link_libraries(
     PRIVATE
     Qt::Core Qt::Gui Qt::Widgets Qt::Svg
     PkgConfig::POPPLER_QT6
+    spdlog::spdlog
 )
 
 # fix the "qt.qpa.plugin: Could not find the Qt platform plugin 'windows' in ''" issue

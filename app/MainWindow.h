@@ -2,6 +2,7 @@
 
 #include <QMainWindow>
 #include <QSplitter>
+#include <QStackedWidget>
 #include "controller/DocumentController.h"
 #include "controller/PageController.h"
 #include "controller/tool.hpp"
@@ -13,9 +14,12 @@
 #include "model/RenderModel.h"
 #include "ui/core/MenuBar.h"
 #include "ui/core/SideBar.h"
+#include "ui/core/RightSideBar.h"
 #include "ui/core/StatusBar.h"
 #include "ui/core/ToolBar.h"
 #include "ui/core/ViewWidget.h"
+#include "ui/widgets/WelcomeWidget.h"
+#include "ui/managers/WelcomeScreenManager.h"
 
 
 class MainWindow : public QMainWindow {
@@ -41,20 +45,35 @@ private slots:
     void onOpenRecentFileRequested(const QString& filePath);
     void handleActionExecuted(ActionMap id);
 
+    // Welcome screen slots
+    void onWelcomeScreenShowRequested();
+    void onWelcomeScreenHideRequested();
+    void onWelcomeFileOpenRequested(const QString& filePath);
+    void onWelcomeNewFileRequested();
+    void onWelcomeOpenFileRequested();
+
 private:
     void initWindow();
     void initContent();
     void initModel();
     void initController();
     void initConnection();
+    void initWelcomeScreen();
+    void initWelcomeScreenConnections();
 
     MenuBar* menuBar;
     ToolBar* toolBar;
     SideBar* sideBar;
+    RightSideBar* rightSideBar;
     StatusBar* statusBar;
     ViewWidget* viewWidget;
 
     QSplitter* mainSplitter;
+
+    // Welcome screen components
+    QStackedWidget* m_contentStack;
+    WelcomeWidget* m_welcomeWidget;
+    WelcomeScreenManager* m_welcomeScreenManager;
 
     DocumentController* documentController;
     PageController* pageController;

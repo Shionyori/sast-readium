@@ -30,11 +30,15 @@ public:
 
     // 多文档操作方法
     bool openDocument(const QString& filePath);
+    bool openDocuments(const QStringList& filePaths);
     bool closeDocument(int index);
     bool closeCurrentDocument();
     void switchToDocument(int index);
     void showDocumentMetadata(QWidget* parent);
     void saveDocumentCopy(QWidget* parent);
+
+    // 文件夹扫描功能
+    QStringList scanFolderForPDFs(const QString& folderPath);
 
     // 最近文件管理
     void setRecentFilesManager(RecentFilesManager* manager);

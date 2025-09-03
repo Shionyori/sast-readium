@@ -1,25 +1,47 @@
 #include "DocumentController.h"
 #include <poppler/qt6/poppler-qt6.h>
-#include <QDebug>
 #include <QFile>
 #include <QFileDialog>
+#include "utils/LoggingMacros.h"
 #include <QMessageBox>
 #include <QStandardPaths>
+#include <QStringList>
+#include <QDir>
+#include <QDirIterator>
+#include <QFileInfo>
 #include "../ui/dialogs/DocumentMetadataDialog.h"
+#include "utils/LoggingMacros.h"
 
 
 void DocumentController::initializeCommandMap() {
     commandMap = {
         {ActionMap::openFile,
          [this](QWidget* ctx) {
-             QString filePath = QFileDialog::getOpenFileName(
-                 ctx, tr("Open PDF"),
+             QStringList filePaths = QFileDialog::getOpenFileNames(
+                 ctx, tr("Open PDF Files"),
                  QStandardPaths::writableLocation(
                      QStandardPaths::DocumentsLocation),
                  tr("PDF Files (*.pdf)"));
-             if (!filePath.isEmpty()) {
-                 bool success = openDocument(filePath);
+             if (!filePaths.isEmpty()) {
+                 bool success = openDocuments(filePaths);
                  emit documentOperationCompleted(ActionMap::openFile, success);
+             }
+         }},
+        {ActionMap::openFolder,
+         [this](QWidget* ctx) {
+             QString folderPath = QFileDialog::getExistingDirectory(
+                 ctx, tr("Open Folder"),
+                 QStandardPaths::writableLocation(
+                     QStandardPaths::DocumentsLocation),
+                 QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+             if (!folderPath.isEmpty()) {
+                 QStringList pdfFiles = scanFolderForPDFs(folderPath);
+                 if (!pdfFiles.isEmpty()) {
+                     bool success = openDocuments(pdfFiles);
+                     emit documentOperationCompleted(ActionMap::openFolder, success);
+                 } else {
+                     emit documentOperationCompleted(ActionMap::openFolder, false);
+                 }
              }
          }},
         {ActionMap::save, [this](QWidget* ctx) { /*....save()....*/ }},
@@ -151,7 +173,7 @@ void DocumentController::initializeCommandMap() {
         {ActionMap::openRecentFile,
          [this](QWidget* ctx) {
              // 这个操作通过信号处理，不在这里直接实现
-             qDebug() << "openRecentFile action triggered";
+             LOG_DEBUG("openRecentFile action triggered");
          }},
         {ActionMap::clearRecentFiles,
          [this](QWidget* ctx) {
@@ -169,13 +191,13 @@ DocumentController::DocumentController(DocumentModel* model)
 }
 
 void DocumentController::execute(ActionMap actionID, QWidget* context) {
-    qDebug() << "EventID:" << actionID << "context" << context;
+    LOG_DEBUG("EventID: {} context: {}", static_cast<int>(actionID), static_cast<void*>(context));
 
     auto it = commandMap.find(actionID);
     if (it != commandMap.end()) {
         (*it)(context);
     } else {
-        qWarning() << "Unknown action ID:" << static_cast<int>(actionID);
+        LOG_WARNING("Unknown action ID: {}", static_cast<int>(actionID));
     }
 }
 
@@ -185,6 +207,38 @@ bool DocumentController::openDocument(const QString& filePath) {
     // 如果文件打开成功，添加到最近文件列表
     if (success && recentFilesManager) {
         recentFilesManager->addRecentFile(filePath);
+    }
+
+    return success;
+}
+
+bool DocumentController::openDocuments(const QStringList& filePaths) {
+    if (filePaths.isEmpty()) {
+        return false;
+    }
+
+    // 过滤有效的PDF文件
+    QStringList validPaths;
+    for (const QString& filePath : filePaths) {
+        if (!filePath.isEmpty() && QFile::exists(filePath) &&
+            filePath.toLower().endsWith(".pdf")) {
+            validPaths.append(filePath);
+        }
+    }
+
+    if (validPaths.isEmpty()) {
+        LOG_WARNING("No valid PDF files found in the selection");
+        return false;
+    }
+
+    // 使用DocumentModel的批量打开方法
+    bool success = documentModel->openFromFiles(validPaths);
+
+    // 如果文件打开成功，添加到最近文件列表
+    if (success && recentFilesManager) {
+        for (const QString& filePath : validPaths) {
+            recentFilesManager->addRecentFile(filePath);
+        }
     }
 
     return success;
@@ -396,4 +450,39 @@ void DocumentController::saveDocumentCopy(QWidget* parent) {
 
     // 发送操作完成信号
     emit documentOperationCompleted(ActionMap::saveAs, success);
+}
+
+QStringList DocumentController::scanFolderForPDFs(const QString& folderPath) {
+    QStringList pdfFiles;
+
+    if (folderPath.isEmpty()) {
+        LOG_WARNING("DocumentController::scanFolderForPDFs: Empty folder path provided");
+        return pdfFiles;
+    }
+
+    QDir dir(folderPath);
+    if (!dir.exists()) {
+        LOG_WARNING("DocumentController::scanFolderForPDFs: Folder does not exist: {}", folderPath.toStdString());
+        return pdfFiles;
+    }
+
+    LOG_DEBUG("DocumentController: Scanning folder for PDFs: {}", folderPath.toStdString());
+
+    // 使用QDirIterator递归扫描文件夹中的所有PDF文件
+    QDirIterator it(folderPath, QStringList() << "*.pdf" << "*.PDF",
+                   QDir::Files | QDir::Readable, QDirIterator::Subdirectories);
+
+    while (it.hasNext()) {
+        QString filePath = it.next();
+
+        // 验证文件是否存在且可读
+        QFileInfo fileInfo(filePath);
+        if (fileInfo.exists() && fileInfo.isReadable() && fileInfo.size() > 0) {
+            pdfFiles.append(filePath);
+            LOG_DEBUG("DocumentController: Found PDF file: {}", filePath.toStdString());
+        }
+    }
+
+    LOG_DEBUG("DocumentController: Found {} PDF files in folder", pdfFiles.size());
+    return pdfFiles;
 }

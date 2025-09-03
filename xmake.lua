@@ -18,6 +18,7 @@ add_rules("mode.debug", "mode.release")
 
 -- Package requirements (only non-Qt packages)
 add_requires("pkgconfig::poppler-qt6")
+add_requires("spdlog")
 
 -- Build options
 option("toolchain")
@@ -165,6 +166,7 @@ target("sast-readium")
     add_files("app/controller/DocumentController.h")
     add_files("app/controller/PageController.h")
     add_files("app/managers/StyleManager.h")
+    add_files("app/managers/FileTypeIconManager.h")
     add_files("app/managers/RecentFilesManager.h")
     add_files("app/ui/viewer/PDFViewer.h")
     add_files("app/ui/viewer/PDFOutlineWidget.h")
@@ -271,6 +273,9 @@ target("sast-readium")
     
     -- Add poppler-qt6 dependency
     add_packages("pkgconfig::poppler-qt6")
+
+    -- Add spdlog dependency
+    add_packages("spdlog")
     
     -- Generate config.h from template
     before_build(function (target)
@@ -396,6 +401,7 @@ target("sast-readium")
 
     -- Managers
     add_files("app/managers/StyleManager.cpp")
+    add_files("app/managers/FileTypeIconManager.cpp")
     add_files("app/managers/RecentFilesManager.cpp")
 
     -- UI Manager components
@@ -486,7 +492,7 @@ if has_config("enable_tests") then
         set_default(false)
         add_deps("sast-readium")
         add_files("tests/*.cpp")
-        add_packages("pkgconfig::poppler-qt6")
+        add_packages("pkgconfig::poppler-qt6", "spdlog")
     target_end()
 end
 
@@ -496,7 +502,7 @@ if has_config("enable_examples") then
         set_kind("binary")
         set_default(false)
         add_files("app/example/*.cpp")
-        add_packages("pkgconfig::poppler-qt6")
+        add_packages("pkgconfig::poppler-qt6", "spdlog")
     target_end()
 end
 
